@@ -34,8 +34,6 @@ The script outputs CSV files to the specified output directory:
 - `percentage_covered`: Coverage percentage
 - `species`, `genus`, `family`, `order`, `class`, `phylum`, `kingdom`: Full lineage information
 
-Only scaffolds that have no matches to target taxa AND have >10% coverage by other taxa are included in this file. Other scaffolds are not considered sufficient to classify as non-target and ignored.
-
 ## Examples
 
 ### Basic usage:
