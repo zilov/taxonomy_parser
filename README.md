@@ -21,7 +21,7 @@ The script outputs a CSV format to stdout with the following columns:
 
 - `scaffold_id`: The ID of the scaffold without coordinates
 - `tax_id`: The taxonomic ID
-- `length`: The sum of coverage lengths for this taxonomic ID
+- `covered_length`: The sum of coverage lengths for this taxonomic ID
 - `top_n`: The rank of this taxonomic ID for the scaffold (1 = top match)
 - `percentage_covered`: The percentage of the scaffold covered by this taxon (when FASTA file is provided)
 - `is_target`: Boolean indicating whether the taxon matches specified target taxa (when lineage database is provided)

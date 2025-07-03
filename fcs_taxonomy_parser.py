@@ -5,6 +5,7 @@ import argparse
 from collections import defaultdict
 from typing import Generator, Tuple, Dict
 import pandas as pd
+import gzip
 
 def parse_taxonomy_file(file_path):
     """Parse the taxonomy file and extract scaffold-taxa relationships with coverage."""
@@ -43,10 +44,17 @@ def parse_taxonomy_file(file_path):
     return scaffold_taxa_lengths
 
 def fasta_reader_yield(path_to_fasta_file: str) -> Generator[Tuple[str, str], None, None]:
-    """Yield tuples of (header, sequence) from a FASTA file."""
+    """Yield tuples of (header, sequence) from a FASTA file (plain text or gzipped)."""
+    
     header = None
     seq = []
-    with open(path_to_fasta_file) as fh:
+    
+    # Determine if file is gzipped based on extension
+    is_gzipped = path_to_fasta_file.endswith('.gz')
+    opener = gzip.open if is_gzipped else open
+    mode = 'rt' if is_gzipped else 'r'
+    
+    with opener(path_to_fasta_file, mode) as fh:
         for line in fh:
             line = line.strip()
             if line.startswith(">"):
@@ -111,7 +119,7 @@ def is_target_taxon(tax_id, lineage_dict, target_taxa):
 def write_output(summary, fasta_lengths=None, lineage_dict=None, target_taxa=None):
     """Write output with all columns, using None for unavailable data."""
     # Print header
-    print("scaffold_id,tax_id,length,top_n,percentage_covered,is_target")
+    print("scaffold_id,tax_id,covered_length,top_n,percentage_covered,is_target")
     
     for row in summary:
         scaffold_id, tax_id, covered_length, rank = row
