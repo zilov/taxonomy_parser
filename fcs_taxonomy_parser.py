@@ -2,10 +2,31 @@
 
 import sys
 import argparse
+import logging
 from collections import defaultdict
 from typing import Generator, Tuple, Dict
 import pandas as pd
 import gzip
+
+def setup_logger():
+    """Configure and return a logger for the application."""
+    logger = logging.getLogger('taxonomy_parser')
+    logger.setLevel(logging.INFO)
+    
+    # Create console handler
+    ch = logging.StreamHandler(sys.stderr)
+    ch.setLevel(logging.INFO)
+    
+    # Create formatter
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    ch.setFormatter(formatter)
+    
+    # Add handler to logger
+    logger.addHandler(ch)
+    return logger
+
+# Initialize logger
+logger = setup_logger()
 
 def parse_taxonomy_file(file_path):
     """Parse the taxonomy file and extract scaffold-taxa relationships with coverage."""
@@ -93,7 +114,7 @@ def parse_ranked_lineage(lineage_file):
     """Parse the NCBI ranked lineage file and create a mapping of tax IDs to lineage information."""
     columns = ['taxid', 'tax_name', 'species', 'genus', 'family', 'order', 'class', 'phylum', 'kingdom', 'superkingdom']
     
-    lineage_df = pd.read_csv(lineage_file, sep='\t|\t', engine='python', names=columns)
+    lineage_df = pd.read_csv(lineage_file, sep='\t\|\t', engine='python', names=columns)
     lineage_df[columns[-1]] = lineage_df[columns[-1]].str.rstrip('\t|')
     
     # Convert DataFrame to dictionary for easy lookups
@@ -153,22 +174,23 @@ def main(tax_file=None, fasta_file=None, lineage_file=None, target_taxa=None):
     
     # Process fasta file if provided
     if fasta_file:
-        print(f"Processing fasta file: {fasta_file}")
+        logger.info(f"Processing fasta file: {fasta_file}")
         fasta_lengths = get_fasta_lengths(fasta_file)
         if not fasta_lengths:
+            logger.error(f"No sequences found in FASTA file {fasta_file}. The file may be empty or in an incorrect format.")
             raise ValueError(f"No sequences found in FASTA file {fasta_file}. The file may be empty or in an incorrect format.")
     
     # Process lineage file if provided
     if lineage_file:
-        print(f"Processing lineage database: {lineage_file}")
+        logger.info(f"Processing lineage database: {lineage_file}")
         lineage_dict = parse_ranked_lineage(lineage_file)
     
     if target_taxa:
-        print(f"Target taxa filters: {target_taxa}")
+        logger.info(f"Target taxa filters: {target_taxa}")
     
     # Process taxonomy file if provided
     if tax_file:
-        print(f"Processing taxonomy file: {tax_file}")
+        logger.info(f"Processing taxonomy file: {tax_file}")
         scaffold_taxa_lengths = parse_taxonomy_file(tax_file)
     
     # Generate summary
@@ -178,6 +200,7 @@ def main(tax_file=None, fasta_file=None, lineage_file=None, target_taxa=None):
     if tax_file and fasta_file:
         missing_scaffolds = [sid for sid in scaffold_taxa_lengths.keys() if sid not in fasta_lengths]
         if missing_scaffolds:
+            logger.warning(f"Scaffold IDs from taxonomy file not found in FASTA file: {missing_scaffolds[:5]}...")
             raise ValueError(f"Scaffold IDs from taxonomy file not found in FASTA file: {missing_scaffolds[:5]}...")
     
     # Write output
@@ -189,7 +212,14 @@ if __name__ == "__main__":
     parser.add_argument('-f', '--fasta', help='Path to the fasta file to process')
     parser.add_argument('-r', '--rankedlineage_db', help='Path to NCBI ranked lineage database file')
     parser.add_argument('--target_taxa', nargs='+', help='Target taxa in format taxon:value (e.g., order:coleoptera family:primates)')
+    parser.add_argument('--log', help='Path to log file (if not provided, logs to stderr)', default=None)
     args = parser.parse_args()
+    
+    # Configure file logging if requested
+    if args.log:
+        file_handler = logging.FileHandler(args.log)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levellevel)s - %(message)s'))
+        logger.addHandler(file_handler)
     
     # Parse target taxa
     target_taxa = {}
@@ -199,6 +229,6 @@ if __name__ == "__main__":
                 level, value = item.split(':')
                 target_taxa[level.lower()] = value.lower()
             except ValueError:
-                print(f"Warning: Invalid target taxa format '{item}'. Expected format is 'taxon:value'")
+                logger.warning(f"Invalid target taxa format '{item}'. Expected format is 'taxon:value'")
     
     main(tax_file=args.tax_results, fasta_file=args.fasta, lineage_file=args.rankedlineage_db, target_taxa=target_taxa)
