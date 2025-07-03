@@ -206,7 +206,9 @@ def write_non_target_scaffolds(summary_file, output_file, lineage_df):
             top1_rows = group[group['top_n'] == 1]
             if not top1_rows.empty:
                 top1_row = top1_rows.iloc[0]
-                non_target_scaffolds.append(top1_row)
+                # Check if the percentage covered is greater than 10%
+                if top1_row["percentage_covered"] > 10:
+                    non_target_scaffolds.append(top1_row)
     
     # Write the non-target scaffolds file
     with open(output_file, 'w') as f:
