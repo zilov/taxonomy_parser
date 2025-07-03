@@ -111,33 +111,55 @@ def generate_summary(scaffold_taxa_lengths):
     return summary
 
 def parse_ranked_lineage(lineage_file):
-    """Parse the NCBI ranked lineage file and create a mapping of tax IDs to lineage information."""
+    """Parse the NCBI ranked lineage file and return a DataFrame with lineage information."""
     columns = ['taxid', 'tax_name', 'species', 'genus', 'family', 'order', 'class', 'phylum', 'kingdom', 'superkingdom']
     
-    lineage_df = pd.read_csv(lineage_file, sep='\t\|\t', engine='python', names=columns)
+    # Fix the separator pattern - use raw string to avoid escape sequence warning
+    lineage_df = pd.read_csv(lineage_file, sep=r'\t\|\t', engine='python', names=columns)
     lineage_df[columns[-1]] = lineage_df[columns[-1]].str.rstrip('\t|')
     
-    # Convert DataFrame to dictionary for easy lookups
-    lineage_dict = {}
-    for _, row in lineage_df.iterrows():
-        taxid = row['taxid']
-        lineage_dict[taxid] = {col: row[col] for col in columns[1:]}
+    # Clean all string columns
+    for col in columns[1:]:  # Skip taxid
+        lineage_df[col] = lineage_df[col].astype(str).str.strip()
     
-    return lineage_dict
+    # Convert taxid to string and set as index for faster lookups
+    lineage_df['taxid'] = lineage_df['taxid'].astype(str)
+    lineage_df.set_index('taxid', inplace=True)
+    
+    logger.info(f"Loaded {len(lineage_df)} taxonomic records from lineage database")
+    
+    return lineage_df
 
-def is_target_taxon(tax_id, lineage_dict, target_taxa):
+def is_target_taxon(tax_id, lineage_df, target_taxa):
     """Check if a tax ID belongs to the target taxa based on its lineage."""
-    if tax_id not in lineage_dict or not target_taxa:
+    try:
+        tax_id_str = str(tax_id).strip()
+        if tax_id_str not in lineage_df.index or not target_taxa:
+            return False
+        
+        row = lineage_df.loc[tax_id_str]
+        
+        for level, target_value in target_taxa.items():
+            if level in row.index and pd.notna(row[level]):
+                actual_value = str(row[level]).lower().strip()
+                target_value_clean = target_value
+                
+                # Skip 'nan' values
+                if actual_value == 'nan':
+                    continue
+                
+                logger.debug(f"Comparing {level}: '{actual_value}' vs '{target_value_clean}' for tax_id {tax_id_str}")
+                
+                if actual_value == target_value_clean:
+                    logger.debug(f"Target match found: {tax_id_str} matches {level}={target_value_clean}")
+                    return True
+        
         return False
-    
-    lineage = lineage_dict[tax_id]
-    for level, target_value in target_taxa.items():
-        if level in lineage and lineage[level].lower() == target_value.lower():
-            return True
-    
-    return False
+    except Exception as e:
+        logger.debug(f"Error checking target taxon for {tax_id}: {e}")
+        return False
 
-def write_output(summary, fasta_lengths=None, lineage_dict=None, target_taxa=None):
+def write_output(summary, fasta_lengths=None, lineage_df=None, target_taxa=None):
     """Write output with all columns, using None for unavailable data."""
     # Print header
     print("scaffold_id,tax_id,covered_length,top_n,percentage_covered,is_target")
@@ -154,8 +176,8 @@ def write_output(summary, fasta_lengths=None, lineage_dict=None, target_taxa=Non
         
         # Check if taxon is a target
         is_target = None
-        if lineage_dict and target_taxa:
-            is_target = is_target_taxon(tax_id, lineage_dict, target_taxa)
+        if lineage_df is not None and target_taxa:
+            is_target = is_target_taxon(tax_id, lineage_df, target_taxa)
         
         # Format the values
         percentage_str = f"{percentage:.2f}" if percentage is not None else "None"
@@ -169,7 +191,7 @@ def main(tax_file=None, fasta_file=None, lineage_file=None, target_taxa=None):
     
     # Initialize variables
     fasta_lengths = {}
-    lineage_dict = {}
+    lineage_df = None
     scaffold_taxa_lengths = defaultdict(lambda: defaultdict(int))
     
     # Process fasta file if provided
@@ -183,11 +205,11 @@ def main(tax_file=None, fasta_file=None, lineage_file=None, target_taxa=None):
     # Process lineage file if provided
     if lineage_file:
         logger.info(f"Processing lineage database: {lineage_file}")
-        lineage_dict = parse_ranked_lineage(lineage_file)
+        lineage_df = parse_ranked_lineage(lineage_file)
     
     if target_taxa:
         logger.info(f"Target taxa filters: {target_taxa}")
-    
+            
     # Process taxonomy file if provided
     if tax_file:
         logger.info(f"Processing taxonomy file: {tax_file}")
@@ -196,7 +218,7 @@ def main(tax_file=None, fasta_file=None, lineage_file=None, target_taxa=None):
     # Generate summary
     summary = generate_summary(scaffold_taxa_lengths)
     
-    # Check for scaffold IDs in taxonomy file but not in FASTA file
+        # Check for scaffold IDs in taxonomy file but not in FASTA file
     if tax_file and fasta_file:
         missing_scaffolds = [sid for sid in scaffold_taxa_lengths.keys() if sid not in fasta_lengths]
         if missing_scaffolds:
@@ -204,7 +226,7 @@ def main(tax_file=None, fasta_file=None, lineage_file=None, target_taxa=None):
             raise ValueError(f"Scaffold IDs from taxonomy file not found in FASTA file: {missing_scaffolds[:5]}...")
     
     # Write output
-    write_output(summary, fasta_lengths, lineage_dict, target_taxa)
+    write_output(summary, fasta_lengths, lineage_df, target_taxa)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Parse taxonomy file and extract scaffold-taxa relationships with coverage.")
@@ -215,7 +237,7 @@ if __name__ == "__main__":
     parser.add_argument('--log', help='Path to log file (if not provided, logs to stderr)', default=None)
     args = parser.parse_args()
     
-    # Configure file logging if requested
+        # Configure file logging if requested
     if args.log:
         file_handler = logging.FileHandler(args.log)
         file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levellevel)s - %(message)s'))
@@ -227,7 +249,8 @@ if __name__ == "__main__":
         for item in args.target_taxa:
             try:
                 level, value = item.split(':')
-                target_taxa[level.lower()] = value.lower()
+                target_taxa[level.lower().strip()] = value.lower().strip()
+                logger.info(f"Added target taxa filter: {level.lower().strip()} = {value.lower().strip()}")
             except ValueError:
                 logger.warning(f"Invalid target taxa format '{item}'. Expected format is 'taxon:value'")
     
