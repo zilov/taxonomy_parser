@@ -7,6 +7,7 @@ from collections import defaultdict
 from typing import Generator, Tuple, Dict
 import pandas as pd
 import gzip
+import os
 
 def setup_logger():
     """Configure and return a logger for the application."""
@@ -159,34 +160,82 @@ def is_target_taxon(tax_id, lineage_df, target_taxa):
         logger.debug(f"Error checking target taxon for {tax_id}: {e}")
         return False
 
-def write_output(summary, fasta_lengths=None, lineage_df=None, target_taxa=None):
-    """Write output with all columns, using None for unavailable data."""
-    # Print header
-    print("scaffold_id,tax_id,covered_length,top_n,percentage_covered,is_target")
-    
-    for row in summary:
-        scaffold_id, tax_id, covered_length, rank = row
+def write_output(summary, output_file, fasta_lengths=None, lineage_df=None, target_taxa=None):
+    """Write output to a file with all columns, using None for unavailable data."""
+    with open(output_file, 'w') as f:
+        # Write header
+        f.write("scaffold_id,tax_id,covered_length,top_n,percentage_covered,is_target\n")
         
-        # Calculate percentage if fasta lengths are available
-        percentage = None
-        if fasta_lengths and scaffold_id in fasta_lengths:
-            total_length = fasta_lengths[scaffold_id]
-            if total_length > 0:
-                percentage = (covered_length / total_length) * 100
-        
-        # Check if taxon is a target
-        is_target = None
-        if lineage_df is not None and target_taxa:
-            is_target = is_target_taxon(tax_id, lineage_df, target_taxa)
-        
-        # Format the values
-        percentage_str = f"{percentage:.2f}" if percentage is not None else "None"
-        is_target_str = str(is_target) if is_target is not None else "None"
-        
-        # Print the output
-        print(f"{scaffold_id},{tax_id},{covered_length},{rank},{percentage_str},{is_target_str}")
+        for row in summary:
+            scaffold_id, tax_id, covered_length, rank = row
+            
+            # Calculate percentage if fasta lengths are available
+            percentage = None
+            if fasta_lengths and scaffold_id in fasta_lengths:
+                total_length = fasta_lengths[scaffold_id]
+                if total_length > 0:
+                    percentage = (covered_length / total_length) * 100
+            
+            # Check if taxon is a target
+            is_target = None
+            if lineage_df is not None and target_taxa:
+                is_target = is_target_taxon(tax_id, lineage_df, target_taxa)
+            
+            # Format the values
+            percentage_str = f"{percentage:.2f}" if percentage is not None else "None"
+            is_target_str = str(is_target) if is_target is not None else "None"
+            
+            # Write the output
+            f.write(f"{scaffold_id},{tax_id},{covered_length},{rank},{percentage_str},{is_target_str}\n")
 
-def main(tax_file=None, fasta_file=None, lineage_file=None, target_taxa=None):
+def write_non_target_scaffolds(summary_file, output_file, lineage_df):
+    """Write non-target scaffolds with lineage information of top1 match using the summary output file."""
+    # Read the summary file to identify non-target scaffolds
+    df = pd.read_csv(summary_file)
+    
+    # Group by scaffold_id and check if any row has is_target=True
+    scaffold_groups = df.groupby('scaffold_id')
+    non_target_scaffolds = []
+    
+    for scaffold_id, group in scaffold_groups:
+        # Check if this scaffold has any target taxa matches
+        has_target = group['is_target'].any()
+        
+        if not has_target:
+            # Get the top1 match (top_n == 1)
+            top1_rows = group[group['top_n'] == 1]
+            if not top1_rows.empty:
+                top1_row = top1_rows.iloc[0]
+                non_target_scaffolds.append(top1_row)
+    
+    # Write the non-target scaffolds file
+    with open(output_file, 'w') as f:
+        # Write header
+        f.write("scaffold_id,top_1_taxa,percentage_covered,species,genus,family,order,class,phylum,kingdom\n")
+        
+        for _, row in enumerate(non_target_scaffolds):
+            scaffold_id = row['scaffold_id']
+            tax_id = row['tax_id']
+            percentage_covered = row['percentage_covered']
+            
+            # Get lineage information
+            lineage_info = ["None"] * 7  # species, genus, family, order, class, phylum, kingdom
+            try:
+                tax_id_str = str(tax_id).strip()
+                if tax_id_str in lineage_df.index:
+                    lineage_row = lineage_df.loc[tax_id_str]
+                    lineage_columns = ['species', 'genus', 'family', 'order', 'class', 'phylum', 'kingdom']
+                    for i, col in enumerate(lineage_columns):
+                        if col in lineage_row.index and pd.notna(lineage_row[col]) and str(lineage_row[col]).strip() != 'nan':
+                            lineage_info[i] = str(lineage_row[col]).strip()
+            except Exception as e:
+                logger.debug(f"Error getting lineage for {tax_id}: {e}")
+            
+            # Write the output
+            lineage_str = ",".join(lineage_info)
+            f.write(f"{scaffold_id},{tax_id},{percentage_covered},{lineage_str}\n")
+
+def main(tax_file=None, fasta_file=None, lineage_file=None, target_taxa=None, outdir=None):
     """Main function to run the parser."""
     
     # Initialize variables
@@ -210,23 +259,39 @@ def main(tax_file=None, fasta_file=None, lineage_file=None, target_taxa=None):
     if target_taxa:
         logger.info(f"Target taxa filters: {target_taxa}")
             
-    # Process taxonomy file if provided
-    if tax_file:
-        logger.info(f"Processing taxonomy file: {tax_file}")
-        scaffold_taxa_lengths = parse_taxonomy_file(tax_file)
+
+    logger.info(f"Processing taxonomy file: {tax_file}")
+    scaffold_taxa_lengths = parse_taxonomy_file(tax_file)
     
     # Generate summary
     summary = generate_summary(scaffold_taxa_lengths)
     
-        # Check for scaffold IDs in taxonomy file but not in FASTA file
-    if tax_file and fasta_file:
+    # Check for scaffold IDs in taxonomy file but not in FASTA file
+    if fasta_file:
         missing_scaffolds = [sid for sid in scaffold_taxa_lengths.keys() if sid not in fasta_lengths]
         if missing_scaffolds:
             logger.warning(f"Scaffold IDs from taxonomy file not found in FASTA file: {missing_scaffolds[:5]}...")
             raise ValueError(f"Scaffold IDs from taxonomy file not found in FASTA file: {missing_scaffolds[:5]}...")
     
+    # Create output directory if it doesn't exist
+    os.makedirs(outdir, exist_ok=True)
+    
+    # Generate output filename
+    tax_basename = os.path.basename(tax_file)
+    output_filename = f"{tax_basename}.summary.csv"
+    output_file = os.path.join(outdir, output_filename)
+
+    logger.info(f"Writing output to: {output_file}")
+    
     # Write output
-    write_output(summary, fasta_lengths, lineage_df, target_taxa)
+    write_output(summary, output_file, fasta_lengths, lineage_df, target_taxa)
+    
+    # Write non-target scaffolds if lineage and target taxa are available
+    if lineage_df is not None and target_taxa:
+        non_target_filename = f"{tax_basename}.non_target.csv"
+        non_target_file = os.path.join(outdir, non_target_filename)
+        logger.info(f"Writing non-target scaffolds to: {non_target_file}")
+        write_non_target_scaffolds(output_file, non_target_file, lineage_df)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Parse taxonomy file and extract scaffold-taxa relationships with coverage.")
@@ -235,9 +300,10 @@ if __name__ == "__main__":
     parser.add_argument('-r', '--rankedlineage_db', help='Path to NCBI ranked lineage database file')
     parser.add_argument('--target_taxa', nargs='+', help='Target taxa in format taxon:value (e.g., order:coleoptera family:primates)')
     parser.add_argument('--log', help='Path to log file (if not provided, logs to stderr)', default=None)
+    parser.add_argument('-o', '--outdir', help='Output directory for results (default: current directory)', default=None, required=True)
     args = parser.parse_args()
     
-        # Configure file logging if requested
+    # Configure file logging if requested
     if args.log:
         file_handler = logging.FileHandler(args.log)
         file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levellevel)s - %(message)s'))
@@ -254,4 +320,4 @@ if __name__ == "__main__":
             except ValueError:
                 logger.warning(f"Invalid target taxa format '{item}'. Expected format is 'taxon:value'")
     
-    main(tax_file=args.tax_results, fasta_file=args.fasta, lineage_file=args.rankedlineage_db, target_taxa=target_taxa)
+    main(tax_file=args.tax_results, fasta_file=args.fasta, lineage_file=args.rankedlineage_db, target_taxa=target_taxa, outdir=args.outdir)
