@@ -58,3 +58,87 @@ HAP1_SCAFFOLD_2,9606,200000,1,100.00,True
 ```
 
 This indicates that for `HAP1_SCAFFOLD_1`, the top taxonomic match is tax ID 9606 with a total coverage of 150000 (75% of the scaffold), followed by tax ID 10090 with 50000 coverage (25% of the scaffold). Both are marked as target taxa because they belong to phylum Chordata.
+
+---
+
+# Sourmash Taxonomy Parser
+
+A Python script for parsing and summarizing sourmash comparison results with taxonomic classification.
+
+## Usage
+
+```bash
+python3 sourmash_taxonomy_parser.py -s <sourmash_results> -a <assembly_db> -o <output_dir> [--target_taxa <taxon:value> ...]
+```
+
+### Arguments
+
+- `-s, --sourmash_results`: Path to the sourmash results file to parse (required)
+- `-a, --assembly_db`: Path to assembly database file with taxonomic information (required)
+- `-o, --outdir`: Output directory for results (required)
+- `--target_taxa`: Target taxa in format taxon:value (e.g., order:coleoptera family:carabidae)
+- `--log`: Path to log file (optional, logs to stderr by default)
+
+## Assembly db
+
+The assembly database file should be a CSV file with the following required columns:
+
+- `assembly_accession`: The unique assembly accession identifier (same as 'match' column in sourmash results)
+- `taxid`: NCBI taxonomy ID
+- `species`: Species name
+- `genus`: Genus name
+- `family`: Family name
+- `order`: Order name
+- `class`: Class name
+- `phylum`: Phylum name
+- `kingdom`: Kingdom name
+
+Example format:
+```
+assembly_accession,taxid,species,genus,family,order,class,phylum,kingdom
+GCA_000001.1,9606,Homo sapiens,Homo,Hominidae,Primates,Mammalia,Chordata,Metazoa
+```
+
+## Output Format
+
+The script outputs CSV files to the specified output directory:
+
+### Main summary file: `<sourmash_file>.summary.csv`
+- `header`: Query sequence name
+- `assembly_accession`: Match assembly accession
+- `taxa`: Taxonomic ID from assembly database
+- `top_n`: Rank of this match for the query (1 = best match)
+- `containment`: Containment score from sourmash
+- `jaccard`: Jaccard similarity score
+- `intersect_hashes`: Number of intersecting hashes
+- `is_target`: Boolean indicating whether the match belongs to target taxa
+
+### Non-target queries file: `<sourmash_file>.non_target.csv` (when target taxa specified)
+- `header`: Query sequence name
+- `assembly_accession`: Top match assembly accession
+- `taxa`: Taxonomic ID
+- `containment`, `jaccard`, `intersect_hashes`: Similarity metrics
+- `species`, `genus`, `family`, `order`, `class`, `phylum`, `kingdom`: Full lineage information
+
+## Examples
+
+### Basic usage:
+
+```bash
+python3 sourmash_taxonomy_parser.py -s results.csv -a assembly_db.csv -o output/
+```
+
+### With target taxa filtering:
+
+```bash
+python3 sourmash_taxonomy_parser.py -s results.csv -a assembly_db.csv --target_taxa order:coleoptera family:carabidae -o output/
+```
+
+The output will look like:
+
+```
+header,assembly_accession,taxa,top_n,containment,jaccard,intersect_hashes,is_target
+query1,GCA_000001.1,9606,1,0.750000,0.234567,1500,True
+query1,GCA_000002.1,10090,2,0.450000,0.123456,900,False
+query2,GCA_000003.1,7227,1,0.890000,0.345678,2100,True
+```
