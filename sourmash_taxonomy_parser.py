@@ -42,6 +42,10 @@ def parse_sourmash_results(file_path):
             containment = row['containment']
             jaccard = row['jaccard']
             intersect_hashes = row.get('intersect_hashes', 0)  # Default to 0 if column doesn't exist
+
+            if " " in match_name:
+                # Handle cases where match_name contains spaces
+                match_name = match_name.strip().split(" ")[0]
             
             query_matches[query_name].append({
                 'match_name': match_name,
