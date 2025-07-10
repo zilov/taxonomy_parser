@@ -98,38 +98,41 @@ def generate_summary(query_matches):
     
     return summary
 
-def is_target_taxon(match_name, assembly_df, target_taxa):
-    """Check if a match belongs to the target taxa based on its lineage."""
-    try:
-        if match_name not in assembly_df.index or not target_taxa:
-            return False
-        
-        row = assembly_df.loc[match_name]
-        
-        for level, target_value in target_taxa.items():
-            if level in row.index and pd.notna(row[level]):
-                actual_value = str(row[level]).lower().strip()
-                target_value_clean = target_value
-                
-                # Skip 'nan' values
-                if actual_value == 'nan':
-                    continue
-                
-                logger.debug(f"Comparing {level}: '{actual_value}' vs '{target_value_clean}' for match {match_name}")
-                
-                if actual_value == target_value_clean:
-                    logger.debug(f"Target match found: {match_name} matches {level}={target_value_clean}")
-                    return True
-        
-        return False
-    except Exception as e:
-        logger.debug(f"Error checking target taxon for {match_name}: {e}")
-        return False
+def get_target_genomes(assembly_df, target_taxa):
+    """Pre-compute set of all genomes that match target taxa."""
+    if assembly_df is None or not target_taxa:
+        return set()
+    
+    target_genomes = set()
+    
+    for level, target_value in target_taxa.items():
+        if level in assembly_df.columns:
+            # Vectorized search for this taxonomic level
+            mask = (
+                assembly_df[level].notna() & 
+                (assembly_df[level].astype(str).str.lower().str.strip() == target_value) &
+                (assembly_df[level].astype(str).str.strip() != 'nan')
+            )
+            level_matches = set(assembly_df[mask].index)
+            target_genomes.update(level_matches)
+            
+            logger.info(f"Found {len(level_matches)} genomes matching {level}={target_value}")
+    
+    logger.info(f"Total target genomes: {len(target_genomes)}")
+    return target_genomes
 
 def write_summary_output(summary, output_file, assembly_df=None, target_taxa=None):
     """Write summary output to a file."""
-    # Sort summary to ensure proper ordering: first by query name, then by intersect_hashes descending
-    sorted_summary = sorted(summary, key=lambda x: (x[0], -x[5]))  # x[0] is query_name, x[5] is intersect_hashes
+    # Pre-compute target genomes set
+    target_genomes = get_target_genomes(assembly_df, target_taxa)
+    
+    # Pre-compute taxid dictionary for faster lookup
+    taxid_dict = {}
+    if assembly_df is not None and 'taxid' in assembly_df.columns:
+        taxid_dict = assembly_df['taxid'].dropna().astype(str).str.strip().to_dict()
+    
+    # Sort summary to ensure proper ordering
+    sorted_summary = sorted(summary, key=lambda x: (x[0], -x[5]))
     
     with open(output_file, 'w') as f:
         # Write header
@@ -138,19 +141,11 @@ def write_summary_output(summary, output_file, assembly_df=None, target_taxa=Non
         for row in sorted_summary:
             query_name, match_name, rank, containment, jaccard, intersect_hashes = row
             
-            # Check if match is a target
-            is_target = None
-            if assembly_df is not None and target_taxa:
-                is_target = is_target_taxon(match_name, assembly_df, target_taxa)
+            # Fast lookup: is this genome in target set?
+            is_target = match_name in target_genomes if target_genomes else None
             
-            # Get taxa (taxid) from assembly database
-            taxa = "None"
-            if assembly_df is not None and match_name in assembly_df.index:
-                try:
-                    if 'taxid' in assembly_df.columns and pd.notna(assembly_df.loc[match_name, 'taxid']):
-                        taxa = str(assembly_df.loc[match_name, 'taxid']).strip()
-                except Exception as e:
-                    logger.debug(f"Error getting taxid for {match_name}: {e}")
+            # Fast lookup: get taxid from pre-computed dictionary
+            taxa = taxid_dict.get(match_name, "None")
             
             # Format the values
             is_target_str = str(is_target) if is_target is not None else "None"
