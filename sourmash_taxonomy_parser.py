@@ -165,8 +165,8 @@ def write_summary_output(summary, output_file, assembly_df=None, target_taxa=Non
 
 def write_non_target_output(summary_file, output_file, assembly_df, sourmash_file=None, assembly_db=None, target_taxa=None):
     """Write non-target queries with lineage information of top1 match."""
-    # Read the summary file to identify non-target queries
-    df = pd.read_csv(summary_file)
+    # Read the summary file to identify non-target queries (skip comment lines starting with #)
+    df = pd.read_csv(summary_file, comment='#')
     
     # Group by header and check if any row has is_target=True
     query_groups = df.groupby('header')
